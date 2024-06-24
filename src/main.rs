@@ -8,7 +8,7 @@ fn main() -> io::Result<()> {
 
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).expect("Could not create new terminal");
     let mut should_quit  = false;
-    let mut position = (0, 0);
+    let mut position = Position::new(0, 0);
     let mut todos: Vec<String> = vec!["TODO".to_string(), "Teste".to_string()];
     let mut enable_add = false;
     let mut todo = "".to_string();
@@ -23,7 +23,43 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn ui(frame: &mut Frame, position: &mut (u16, u16), todos: &Vec<String>, enbale_add: &bool, todo: &String) {
+struct Position {
+    x: u16,
+    y: u16,
+}
+
+impl Position {
+    fn new(x: u16, y: u16) -> Position{
+       Position { x, y } 
+    }
+
+    fn up (&mut self){
+        if self.y != 0 {
+            self.y = self.y - 1;
+        };
+    }
+
+    fn down (&mut self) {
+        self.y = self.y + 1;
+    }
+
+    fn left (&mut self){
+        if self.x != 0 {
+            self.x = self.x - 1;
+        };
+    }
+
+    fn right (&mut self) {
+        self.x = self.x + 1;
+    }
+
+    fn change(&mut self, x: u16, y: u16) {
+        self.x = x;
+        self.y = y;
+    }
+}
+
+fn ui(frame: &mut Frame, position: &mut Position, todos: &Vec<String>, enbale_add: &bool, todo: &String) {
     let list = List::new(todos.to_owned());
     
     let mut layout_len: u16 = 0;
@@ -37,24 +73,24 @@ fn ui(frame: &mut Frame, position: &mut (u16, u16), todos: &Vec<String>, enbale_
         frame.render_widget(Line::raw(todo), main_layout[0]);
     }
 
-    frame.set_cursor(position.0, position.1);
+    frame.set_cursor(position.x, position.y);
     frame.render_widget(list, main_layout[1])
 }
 
         
-fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut (u16, u16), todo: &mut String, todos: &mut Vec<String>) {
+fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut Position, todo: &mut String, todos: &mut Vec<String>) {
     if key.kind == event::KeyEventKind::Press {
         match key.code {
             KeyCode::Char(c) => {
                 todo.push(c);
-                position.0 = position.0 + 1;
+                position.right();
             }
             KeyCode::Backspace => {
-                if position.0 == 0 {
+                if position.x == 0 {
                     return 
                 }
                 todo.pop();
-                position.0 = position.0 - 1;
+                position.left();
             }
             KeyCode::Esc => {
                 *enable_add = false;
@@ -62,14 +98,14 @@ fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut (u16, u16),
             KeyCode::Enter => {
                 *enable_add = false;
                 todos.push(todo.to_string());
-                *position = (0,0);
+                position.change(0, 0);
             }
             _ => {}
         }
     }
 }
 
-fn handle_nav(key: KeyEvent, position: &mut (u16, u16), enable_add: &mut bool) -> bool {
+fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool) -> bool {
     if key.kind == event::KeyEventKind::Press {
         match key.code {
             KeyCode::Char('q') => {
@@ -79,25 +115,19 @@ fn handle_nav(key: KeyEvent, position: &mut (u16, u16), enable_add: &mut bool) -
                 return true
             }
             KeyCode::Right => {
-                position.0 = position.0 + 1;
+                position.right();
             }
             KeyCode::Left => {
-                if position.0 == 0 {
-                    return false
-                }
-                position.0 = position.0 - 1;
+                position.left();
             }
             KeyCode::Up => {
-                if position.1 == 0 {
-                    return false
-                }
-                position.1 = position.1 - 1;
+                position.up();
             }
             KeyCode::Down => {
-                position.1 = position.1 + 1;
+                position.down();
             }
             KeyCode::Char('i') => {
-                *position = (0,0);
+                position.change(0, 0);
                 *enable_add = true;
             }
             KeyCode::Esc => {
@@ -109,7 +139,7 @@ fn handle_nav(key: KeyEvent, position: &mut (u16, u16), enable_add: &mut bool) -
     false
 }
 
-fn handle_events(position: &mut (u16, u16), todos: &mut Vec<String>, enable_add: &mut bool, todo: &mut String) -> io::Result<bool> {
+fn handle_events(position: &mut Position, todos: &mut Vec<String>, enable_add: &mut bool, todo: &mut String) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(50))? {
         if let Event::Key(key) = event::read().expect("Reading event") {
             if *enable_add == false {
