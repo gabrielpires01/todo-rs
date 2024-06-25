@@ -1,36 +1,26 @@
-use std::io::{self, stdout};
+use std::{io::{self, stdout}, u16};
 use crossterm::{event::{self, Event, KeyCode, KeyEvent}, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
-use ratatui::{backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, text::Line, widgets::List, Frame, Terminal};
-
-fn main() -> io::Result<()> {
-    enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen).expect("Alternate window");
-
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).expect("Could not create new terminal");
-    let mut should_quit  = false;
-    let mut position = Position::new(0, 0);
-    let mut todos: Vec<String> = vec!["TODO".to_string(), "Teste".to_string()];
-    let mut enable_add = false;
-    let mut todo = "".to_string();
-
-    while !should_quit {
-        terminal.draw(|frame| ui(frame, &mut position, &todos, &enable_add, &todo)).expect("Drawing display frame");
-        should_quit = handle_events(&mut position, &mut todos, &mut enable_add, &mut todo)?;
-    };
-
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen).expect("Leave alterante window");
-    Ok(())
-}
+use ratatui::{backend::CrosstermBackend, layout::{Constraint, Layout}, style::{Color, Style}, text::Span, widgets::{Block, List, ListItem, Paragraph}, Frame, Terminal};
 
 struct Position {
     x: u16,
     y: u16,
+
+    max_y: u16,
 }
 
 impl Position {
-    fn new(x: u16, y: u16) -> Position{
-       Position { x, y } 
+    fn new(x: u16, y: u16, max_y: u16) -> Position{
+       Position { x, y, max_y } 
+    }
+
+    fn change(&mut self, x: u16, y: u16) {
+        self.x = x;
+        self.y = y;
+    }
+
+    fn change_max(&mut self, max_y: u16) {
+        self.max_y = max_y;
     }
 
     fn up (&mut self){
@@ -40,7 +30,9 @@ impl Position {
     }
 
     fn down (&mut self) {
-        self.y = self.y + 1;
+        if self.max_y - 1 != self.y {
+            self.y = self.y + 1;
+        }
     }
 
     fn left (&mut self){
@@ -52,33 +44,71 @@ impl Position {
     fn right (&mut self) {
         self.x = self.x + 1;
     }
-
-    fn change(&mut self, x: u16, y: u16) {
-        self.x = x;
-        self.y = y;
-    }
 }
 
-fn ui(frame: &mut Frame, position: &mut Position, todos: &Vec<String>, enbale_add: &bool, todo: &String) {
-    let list = List::new(todos.to_owned());
-    
+struct Item {
+    id: String,
+    done: bool,
+}
+
+enum Tabs {
+    TODO,
+    DONE
+}
+
+fn main() -> io::Result<()> {
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen).expect("Alternate window");
+
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).expect("Could not create new terminal");
+    let mut should_quit  = false;
+    let mut todos: Vec<Item> = vec![];
+    let mut enable_add = false;
+    let mut todo = "".to_string();
+    let mut position = Position::new(0,0, todos.len().try_into().unwrap());
+    let _current_tab =  Tabs::TODO;
+
+    while !should_quit {
+        terminal.draw(|frame| ui(frame, &mut position, &todos, &enable_add, &todo)).expect("Drawing display frame");
+        should_quit = handle_events(&mut position, &mut todos, &mut enable_add, &mut todo)?;
+    };
+
+    disable_raw_mode()?;
+    stdout().execute(LeaveAlternateScreen).expect("Leave alterante window");
+    Ok(())
+}
+
+
+fn ui(frame: &mut Frame, position: &mut Position, todos: &Vec<Item>, enable_add: &bool, todo: &String) {
+    let active_style = Style::new().bg(Color::White).fg(Color::Black);
+    let mut list_item: Vec<ListItem> = vec![];
+    for (index, item) in todos.iter().enumerate() {
+        if index == position.y.into() && *enable_add == false {
+            let text = Span::raw(&item.id).style(active_style);
+            list_item.push(ListItem::new(text));
+            continue;
+        }
+        list_item.push(ListItem::new(&*item.id))
+    }
+    let list = List::new(list_item);
+
     let mut layout_len: u16 = 0;
-    if *enbale_add == true {
-        layout_len = 1
+    if *enable_add == true {
+        frame.set_cursor(position.x, position.y);
+        layout_len = 3
     }
 
     let main_layout = Layout::vertical([Constraint::Length(layout_len), Constraint::Length(todos.len().try_into().unwrap())]).split(frame.size());
     
-    if *enbale_add == true {
-        frame.render_widget(Line::raw(todo), main_layout[0]);
+    if *enable_add == true {
+        frame.render_widget(Paragraph::new(todo.to_owned()).block(Block::bordered().title("Item :")), main_layout[0]);
     }
 
-    frame.set_cursor(position.x, position.y);
     frame.render_widget(list, main_layout[1])
 }
 
         
-fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut Position, todo: &mut String, todos: &mut Vec<String>) {
+fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut Position, todo: &mut String, todos: &mut Vec<Item>) {
     if key.kind == event::KeyEventKind::Press {
         match key.code {
             KeyCode::Char(c) => {
@@ -86,7 +116,7 @@ fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut Position, t
                 position.right();
             }
             KeyCode::Backspace => {
-                if position.x == 0 {
+                if position.x == 1 {
                     return 
                 }
                 todo.pop();
@@ -97,8 +127,10 @@ fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut Position, t
             }
             KeyCode::Enter => {
                 *enable_add = false;
-                todos.push(todo.to_string());
+                todos.push(Item { id: todo.to_string(), done: false});
+                position.change_max(todos.len().try_into().unwrap());
                 position.change(0, 0);
+                todo.clear();
             }
             _ => {}
         }
@@ -114,12 +146,6 @@ fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool) -> 
                 }
                 return true
             }
-            KeyCode::Right => {
-                position.right();
-            }
-            KeyCode::Left => {
-                position.left();
-            }
             KeyCode::Up => {
                 position.up();
             }
@@ -127,7 +153,7 @@ fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool) -> 
                 position.down();
             }
             KeyCode::Char('i') => {
-                position.change(0, 0);
+                position.change(1, 1);
                 *enable_add = true;
             }
             KeyCode::Esc => {
@@ -139,7 +165,7 @@ fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool) -> 
     false
 }
 
-fn handle_events(position: &mut Position, todos: &mut Vec<String>, enable_add: &mut bool, todo: &mut String) -> io::Result<bool> {
+fn handle_events(position: &mut Position, todos: &mut Vec<Item>, enable_add: &mut bool, todo: &mut String) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(50))? {
         if let Event::Key(key) = event::read().expect("Reading event") {
             if *enable_add == false {
