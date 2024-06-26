@@ -1,57 +1,58 @@
-use std::{io::{self, stdout}, u16};
+use std::io::{self, stdout};
 use crossterm::{event::{self, Event, KeyCode, KeyEvent}, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
-use ratatui::{backend::CrosstermBackend, layout::{Constraint, Layout}, style::{Color, Style}, text::Span, widgets::{Block, List, ListItem, Paragraph}, Frame, Terminal};
+use ratatui::{backend::CrosstermBackend, layout::{Constraint, Layout, Rect}, style::{Color, Style}, text::Span, widgets::{Block, List, ListItem, Paragraph, Tabs}, Frame, Terminal};
 
 struct Position {
-    x: u16,
-    y: u16,
+    x: usize,
+    y: usize,
 
-    max_y: u16,
+    max_y: usize,
 }
 
 impl Position {
-    fn new(x: u16, y: u16, max_y: u16) -> Position{
-       Position { x, y, max_y } 
+    fn new(x: usize, y: usize) -> Position{
+       Position { x, y, max_y: 1 } 
     }
 
-    fn change(&mut self, x: u16, y: u16) {
+    fn change(&mut self, x: usize, y: usize) {
         self.x = x;
         self.y = y;
     }
 
-    fn change_max(&mut self, max_y: u16) {
+    fn change_max(&mut self, max_y: usize) {
         self.max_y = max_y;
     }
 
-    fn up (&mut self){
-        if self.y != 0 {
+    fn up(&mut self){
+        if self.y != 1 {
             self.y = self.y - 1;
         };
     }
 
-    fn down (&mut self) {
-        if self.max_y - 1 != self.y {
+    fn down(&mut self) {
+        if self.max_y != self.y {
             self.y = self.y + 1;
         }
     }
 
-    fn left (&mut self){
+    fn left(&mut self){
         if self.x != 0 {
             self.x = self.x - 1;
         };
     }
 
-    fn right (&mut self) {
+    fn right(&mut self) {
         self.x = self.x + 1;
     }
 }
 
 struct Item {
     id: String,
-    done: bool,
+    state: TabsState,
 }
 
-enum Tabs {
+#[derive(PartialEq, Eq)]
+enum TabsState {
     TODO,
     DONE
 }
@@ -65,12 +66,14 @@ fn main() -> io::Result<()> {
     let mut todos: Vec<Item> = vec![];
     let mut enable_add = false;
     let mut todo = "".to_string();
-    let mut position = Position::new(0,0, todos.len().try_into().unwrap());
-    let _current_tab =  Tabs::TODO;
+    let mut position = Position::new(0,0);
+    let mut current_tab =  TabsState::TODO;
+    let tabs = ["TODO", "DONE"];
 
     while !should_quit {
-        terminal.draw(|frame| ui(frame, &mut position, &todos, &enable_add, &todo)).expect("Drawing display frame");
-        should_quit = handle_events(&mut position, &mut todos, &mut enable_add, &mut todo)?;
+        position.change_max(todos.len() + 1);
+        terminal.draw(|frame| ui(frame, &mut position, &todos, &enable_add, &todo, tabs, &current_tab)).expect("Drawing display frame");
+        should_quit = handle_events(&mut position, &mut todos, &mut enable_add, &mut todo, &mut current_tab)?;
     };
 
     disable_raw_mode()?;
@@ -79,32 +82,40 @@ fn main() -> io::Result<()> {
 }
 
 
-fn ui(frame: &mut Frame, position: &mut Position, todos: &Vec<Item>, enable_add: &bool, todo: &String) {
+fn ui(frame: &mut Frame, position: &mut Position, todos: &Vec<Item>, enable_add: &bool, todo: &String, tabs: [&str;2], current_tab: &TabsState) {
+    let main_layout = Layout::vertical([Constraint::Length(1), Constraint::Length(todos.len().try_into().unwrap())]).split(frame.size());
     let active_style = Style::new().bg(Color::White).fg(Color::Black);
+    let active_tab_index: usize  = match current_tab {
+        TabsState::TODO => 0,
+        TabsState::DONE => 1
+    };
+    let tabs_component = Tabs::new(tabs).select(active_tab_index);
+
     let mut list_item: Vec<ListItem> = vec![];
+
     for (index, item) in todos.iter().enumerate() {
-        if index == position.y.into() && *enable_add == false {
-            let text = Span::raw(&item.id).style(active_style);
-            list_item.push(ListItem::new(text));
-            continue;
+        if item.state == *current_tab {
+            if index + 2 == position.y && *enable_add == false {
+                let text = Span::raw(&item.id).style(active_style);
+
+                list_item.push(ListItem::new(text));
+                continue;
+            }
+            list_item.push(ListItem::new(&*item.id))
         }
-        list_item.push(ListItem::new(&*item.id))
     }
     let list = List::new(list_item);
 
-    let mut layout_len: u16 = 0;
-    if *enable_add == true {
-        frame.set_cursor(position.x, position.y);
-        layout_len = 3
-    }
 
-    let main_layout = Layout::vertical([Constraint::Length(layout_len), Constraint::Length(todos.len().try_into().unwrap())]).split(frame.size());
     
     if *enable_add == true {
-        frame.render_widget(Paragraph::new(todo.to_owned()).block(Block::bordered().title("Item :")), main_layout[0]);
+        frame.set_cursor(position.x.try_into().unwrap(), position.y.try_into().unwrap());
+        frame.render_widget(Paragraph::new(todo.to_owned()).block(Block::bordered().title("Item :")), Rect::new(0, 0, frame.size().width, 3));
+        return
     }
 
-    frame.render_widget(list, main_layout[1])
+    frame.render_widget(tabs_component, main_layout[0]);
+    frame.render_widget(list, main_layout[1]);
 }
 
         
@@ -127,9 +138,8 @@ fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut Position, t
             }
             KeyCode::Enter => {
                 *enable_add = false;
-                todos.push(Item { id: todo.to_string(), done: false});
-                position.change_max(todos.len().try_into().unwrap());
-                position.change(0, 0);
+                todos.push(Item { id: todo.to_string(), state: TabsState::TODO});
+                position.change(0, 1);
                 todo.clear();
             }
             _ => {}
@@ -137,7 +147,7 @@ fn handle_input(key: KeyEvent, enable_add: &mut bool, position: &mut Position, t
     }
 }
 
-fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool) -> bool {
+fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool, current_tab: &mut TabsState, todos: &mut Vec<Item>) -> bool {
     if key.kind == event::KeyEventKind::Press {
         match key.code {
             KeyCode::Char('q') => {
@@ -145,6 +155,12 @@ fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool) -> 
                     return false;
                 }
                 return true
+            }
+            KeyCode::Tab => {
+                match current_tab {
+                    TabsState::TODO => *current_tab = TabsState::DONE,
+                    TabsState::DONE => *current_tab = TabsState::TODO
+                }
             }
             KeyCode::Up => {
                 position.up();
@@ -159,17 +175,29 @@ fn handle_nav(key: KeyEvent, position: &mut Position, enable_add: &mut bool) -> 
             KeyCode::Esc => {
                 *enable_add = false;
             }
+            KeyCode::Enter => {
+                if position.y > 1  && position.y < todos.len() + 2 {
+                    for (index, item) in todos.iter_mut().enumerate() {
+                        if index + 2 == position.y {
+                            match current_tab {
+                                TabsState::TODO => item.state = TabsState::DONE,
+                                TabsState::DONE => item.state = TabsState::TODO
+                            }
+                        };
+                    }
+                }
+            }
             _ => {}
         }
     }
     false
 }
 
-fn handle_events(position: &mut Position, todos: &mut Vec<Item>, enable_add: &mut bool, todo: &mut String) -> io::Result<bool> {
+fn handle_events(position: &mut Position, todos: &mut Vec<Item>, enable_add: &mut bool, todo: &mut String, current_tab: &mut TabsState) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(50))? {
         if let Event::Key(key) = event::read().expect("Reading event") {
             if *enable_add == false {
-                let result = handle_nav(key, position, enable_add);
+                let result = handle_nav(key, position, enable_add, current_tab, todos);
                 return Ok(result);
             }
             handle_input(key, enable_add, position, todo, todos);
